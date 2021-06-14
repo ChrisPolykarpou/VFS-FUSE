@@ -21,6 +21,26 @@
   underlying filesystem.  The information is saved in a logfile named
   bbfs.log, in the directory from which you run bbfs.
 */
+
+/******************  OUR CODE (COMPRESSED FS)**********************
+ *
+ * We only use structs to keep information.
+ *
+ * We have a struct for metadata, files, blocks and a structure
+ * that acts as the storage that keeps all the different blocks(all_blocks).
+ * We have a similar struct tat acts as a storage for all the
+ * metadata of the files(root_files).
+ *
+ * When we copy a file that has a same block as the other in the mounted directory,
+ * that block is not saved in the storage.
+ *
+ *Can read and write files in size of multiples of 4KB but implemented our bb_read and
+ * bb_write to read and write from an offset and for different sizes.
+ *
+ * To see the contents of a file, use command cat.
+ *
+ */
+////
 #include "config.h"
 #include "params.h"
 //library for the hash function
@@ -45,10 +65,11 @@
 #include "log.h"
 #define BLOCK_SIZE 4096
 #define PATH_SIZE 300
-
+#define MAX_BLOCKS 16
+#define MAX_FILES 10
 
 typedef struct bb_block{
-    unsigned char buffer[BLOCK_SIZE];
+    unsigned char buffer[BLOCK_SIZE + 1];//keeps all the data
     unsigned char hash[SHA_DIGEST_LENGTH];
     //number of blocks, needed only for all_blocks array
     int num_blocks;
@@ -56,25 +77,27 @@ typedef struct bb_block{
 
 typedef struct bb_metadata{
     int num_children;//if file is directory, this show how many files it has in it
-    int size;
+    int size;//SIZE OF FILE
     char name[30];
-    int num_block;
+    int num_block;//number of blocks
     char fullpath[PATH_SIZE];
     mode_t mode;
 }bb_metadata;
 
 typedef struct bb_file {
-    bb_block *block;//periexei indexes twn blocks ths apo ton pinaka all_blocks
+    int block[MAX_BLOCKS];//periexei indexes twn blocks ths apo ton pinaka all_blocks
     struct bb_file *files;
-    int num; //inode number
     bb_metadata *metadata;
 }bb_file;
 
+typedef struct bb_all_blocks{
+    bb_block *blocks;
+    int num_blocks;
+}bb_all_blocks;
 
 //the mount directory's files
 bb_file *root_files;
-bb_block *all_blocks;
-bb_file *all_files;
+bb_all_blocks *all_blocks;
 
 //  All the paths I see are relative to the root of the mounted
 //  filesystem.  In order to get to the underlying filesystem, I need to
@@ -99,10 +122,10 @@ bb_file * check_bbfile(const char *path){
     int i = 0, flag =0;
     bb_file *cur = root_files;
 
-    log_msg("\ncheck_bb_file\n");
+    //log_msg("\ncheck_bb_file\n");
     //strcpy(fpath,path);
     if(strcmp(path, "/") == 0){
-        log_msg("\nexiting check, it was root\n");
+        //log_msg("\nexiting check, it was root\n");
         return cur;
     }
 
@@ -111,40 +134,36 @@ bb_file * check_bbfile(const char *path){
     /* walk through other tokens */
     while( temp != NULL ) {
         flag =0;
-        log_msg("\nin while, CHILDREN: %d, token: %s\n", cur->metadata->num_children, token);
+        //log_msg("\nin while, CHILDREN: %d, token: %s\n", cur->metadata->num_children, token);
         for(i = 0;i < cur->metadata->num_children; i++){
-            log_msg("\nIN FOR\n");
-            if(cur->files[i].metadata->name == NULL)
-              log_msg("\nFILE IS NULL\n");
-            else
-              log_msg("\nin for token: %s, name:%s\n", token,  cur->files[i].metadata->name);
+            //log_msg("\nin for token: %s, name:%s\n", token,  cur->files[i].metadata->name);
             if(strcmp(token, cur->files[i].metadata->name) == 0){
                 cur = &cur->files[i];
                 flag = 1;
-                log_msg("\nin if, children: %d\n",cur->metadata->num_children);
+                //log_msg("\nin if, children: %d\n",cur->metadata->num_children);
                 break;
             }
         }
-        log_msg("\nafter for\n");
+        //log_msg("\nafter for\n");
         //searched all kids and found nothing
         if(flag == 0){
-            log_msg("\nFLAG = 0\n");
+            //log_msg("\nFLAG = 0\n");
             break;
         }
-        log_msg("\nBefore strtok\n");
+        //log_msg("\nBefore strtok\n");
         temp = strtok(NULL, delim);
-        log_msg("\nAfter strtok\n");
+        //log_msg("\nAfter strtok\n");
         if(temp != NULL)
             strcpy(token, temp);
-        log_msg("\nafter strcpy\n");
+        //log_msg("\nafter strcpy\n");
     }
     //an vrhke full path match
     if(flag){
-        log_msg("\nexiting check\n");
+        //log_msg("\nexiting check\n");
         return cur;
     }
 
-    log_msg("\nreturning NULL\n");
+    //log_msg("\nreturning NULL\n");
     return NULL;
 
 }
@@ -172,7 +191,7 @@ int bb_getattr(const char *path, struct stat *statbuf)
     bb_fullpath(fpath, path);
     bb_file *file = check_bbfile(path);
     if(file == NULL){
-        log_msg("\nfile was ENOENT\n");
+        //log_msg("\nfile was ENOENT\n");
         return -ENOENT;
     }
     //statbuf->st_ino = file->number;
@@ -181,7 +200,7 @@ int bb_getattr(const char *path, struct stat *statbuf)
     statbuf->st_mode = file->metadata->mode;
     statbuf->st_size = file->metadata->size;
 
-    log_msg("\nbb_getattr IS OK\n");
+    log_msg("\nTotal Blocks: %d\n", all_blocks->num_blocks);
     return retstat;
 }
 
@@ -210,7 +229,7 @@ int bb_readlink(const char *path, char *link, size_t size)
     if (retstat >= 0) {
 	link[retstat] = '\0';
 	retstat = 0;
-	log_msg("    link=\"%s\"\n", link);
+	//log_msg("    link=\"%s\"\n", link);
     }
 
     return retstat;
@@ -221,7 +240,7 @@ char *get_name(char *path){
     /* get the first token */
     token = strtok(path, delim);
 
-    log_msg("\nget_name\n");
+    //log_msg("\nget_name\n");
     /* walk through other tokens */
     while( token != NULL ) {
         strcpy(old_token, token);
@@ -238,7 +257,7 @@ void add_on_root_dir(bb_file *newfile,  char *path){
    const char delim[15] = "/";
    char *token;
 
-   log_msg("\nadd on root dir\n");
+   //log_msg("\nadd on root dir\n");
    /* get the first token */
    token = strtok(path, delim);
 
@@ -261,7 +280,7 @@ void add_on_root_dir(bb_file *newfile,  char *path){
        log_error("\nadd on root dir realloc\n");
    cur->metadata->size += newfile->metadata->size;
    cur->files[cur->metadata->num_children -1] = *newfile;
-      log_msg("\nLeve add dir\n");
+      //log_msg("\nLeve add dir\n");
 }
 
 
@@ -278,7 +297,7 @@ int bb_mkdir(const char *path, mode_t mode)
     strcpy(pppath, path);
 
     bb_file *newfile = (bb_file *)malloc(sizeof(bb_file));
-    newfile->block = NULL;
+    //newfile->block = NULL;
     newfile->files = (bb_file *)malloc(sizeof(bb_file));
     //num???
     newfile->metadata = (bb_metadata *)malloc(sizeof(bb_metadata));
@@ -291,13 +310,13 @@ int bb_mkdir(const char *path, mode_t mode)
     char name[30];
     strcpy(name, get_name(ppath));
     strcpy(newfile->metadata->name, name);
-    log_msg("MKDIR 1");
-//     for(int i = 0; i < 16; i++){
+    //log_msg("MKDIR 1");
+//     for(int i = 0; i < MAX_BLOCKS; i++){
 //         *(newfile->block[i].buffer) = '\0';
 //         strcpy(newfile->block[i].hash, "00000000000000000000");
 //     }
 
-    log_msg("MKDIR OK");
+    //log_msg("MKDIR OK");
     add_on_root_dir(newfile, pppath);
     return retstat;
 }
@@ -315,12 +334,12 @@ int add_on_root(bb_file *newfile,  char *path){
    /* get the first token */
    token = strtok(path, delim);
 
-   log_msg("\n=============================================\n");
+   //log_msg("\n=============================================\n");
    /* walk through other tokens */
    while( token != NULL ) {
-        log_msg("\nCUR NUM nChildren %d\n", cur->metadata->num_children);
-        log_msg("\nCUR size %d\n", cur->metadata->size);
-        log_msg("\nCUR name %s\n", cur->metadata->name);
+        //log_msg("\nCUR NUM nChildren %d\n", cur->metadata->num_children);
+        //log_msg("\nCUR size %d\n", cur->metadata->size);
+        //log_msg("\nCUR name %s\n", cur->metadata->name);
       for(int j = 0; j < cur->metadata->num_children; j++){
         if(strcmp(cur->files[j].metadata->name,token) == 0){
             cur = &cur->files[j];
@@ -344,29 +363,28 @@ int add_on_root(bb_file *newfile,  char *path){
         //bb_mkdir(path, S_IRWXO | S_IRWXG | S_IRWXU | S_IFDIR);
         //bb_file *dir = check_bbfile(path);
         //cur = dir;
-        log_msg("\nSub dir does not exist!\n");
+        //log_msg("\nSub dir does not exist!\n");
         return ENOENT;
       }
       flag = 0;
 
    }
 
-   log_msg("\nEXITED WHILE\n");
+   //log_msg("\nEXITED WHILE\n");
    (cur->metadata->num_children)++;
    cur->metadata->size += newfile->metadata->size;
-   log_msg("\nCUR NUM nChildren %d\n", cur->metadata->num_children);
-   log_msg("\nCUR size %d\n", cur->metadata->size);
-   log_msg("\nCUR name %s\n", cur->metadata->name);
+   //log_msg("\nCUR NUM nChildren %d\n", cur->metadata->num_children);
+   //log_msg("\nCUR size %d\n", cur->metadata->size);
+   //log_msg("\nCUR name %s\n", cur->metadata->name);
 
-   log_msg("\nbefore realloc\n");
+   //log_msg("\nbefore realloc\n");
    cur->files = realloc(cur->files, cur->metadata->num_children * sizeof(bb_file));
    if(cur->files == NULL){
-       log_msg("\nERROR realloc\n");
+       //log_msg("\nERROR realloc\n");
        log_error("add on root realloc");
    }
    cur->files[cur->metadata->num_children -1] = *newfile;
-   log_msg("\nChildren of root: %d\n", cur->metadata->num_children);
-   log_msg("\nNAME: %s\n", newfile->metadata->name);
+   //log_msg("\nChildren of root: %d\n", cur->metadata->num_children);
    return 0;
 }
 
@@ -387,7 +405,8 @@ int bb_mknod(const char *path, mode_t mode, dev_t dev)
     bb_fullpath(fpath, path);
     strcpy(ppath, path);
     bb_file *newfile = (bb_file *)malloc(sizeof(bb_file));
-    newfile->block = (bb_block *)malloc(sizeof(bb_block));
+    for(int i = 0; i < MAX_BLOCKS; i++)
+        newfile->block[i] = -1;
 
     newfile->files = NULL;
     newfile->metadata = (bb_metadata *)malloc(sizeof(bb_metadata));
@@ -400,29 +419,14 @@ int bb_mknod(const char *path, mode_t mode, dev_t dev)
     char name[30];
     strcpy(name, get_name(ppath));
     strcpy(newfile->metadata->name, name);
-    log_msg("\nBefore strcpy\n");
-    //for(int i = 0; i < 16; i++){
-        strcpy(newfile->block[0].buffer,"\0");
-        strcpy(newfile->block[0].hash, "00000000000000000000");
+    //log_msg("\nBefore strcpy\n");
+    //for(int i = 0; i < MAX_BLOCKS; i++){
+    //    strcpy(newfile->block[0].buffer,"\0");
+    //    strcpy(newfile->block[0].hash, "00000000000000000000");
     //}
 
      add_on_root(newfile, path);
-     log_msg("\nMKNOD - SUCCESS\n");
-    // On Linux this could just be 'mknod(path, mode, dev)' but this
-    // tries to be be more portable by honoring the quote in the Linux
-    // mknod man page stating the only portable use of mknod() is to
-    // make a fifo, but saying it should never actually be used for
-    // that.
-     /*
-    if (S_ISREG(mode)) {
-	retstat = log_syscall("open", open(fpath, O_CREAT | O_EXCL | O_WRONLY, mode), 0);
-	if (retstat >= 0)
-	    retstat = log_syscall("close", close(retstat), 0);
-    } else
-	if (S_ISFIFO(mode))
-	    retstat = log_syscall("mkfifo", mkfifo(fpath, mode), 0);
-	else
-	    retstat = log_syscall("mknod", mknod(fpath, mode, dev), 0);*/
+     //log_msg("\nMKNOD - SUCCESS\n");
 
     return retstat;
 }
@@ -437,15 +441,15 @@ void remove_from_root(const char *path){
     int i, j, flag = 0;
     token = strtok(path, delim);
 
-    log_msg("\nremove from root\n");
+    //log_msg("\nremove from root\n");
     /* walk through other tokens */
     while( token != NULL ) {
         for(i = 0; i < cur->metadata->num_children; i++){
             if(strcmp(cur->files[i].metadata->name,token) == 0){
-                log_msg("\nNAME: %s\n", cur->files[i].metadata->name);
+                //log_msg("\nNAME: %s\n", cur->files[i].metadata->name);
                 parent = cur;
                 cur = &cur->files[i];
-                log_msg("\nNAME CHILD: %s\n", cur->metadata->name);
+                //log_msg("\nNAME CHILD: %s\n", cur->metadata->name);
                 // sub-dir found!
                 flag = 1;
                 break;
@@ -454,35 +458,47 @@ void remove_from_root(const char *path){
 
         token = strtok(NULL, delim);
         if(flag == 1 && token == NULL){
-          log_msg("\nDONE: %s\n", cur->metadata->name);
+          //log_msg("\nDONE: %s\n", cur->metadata->name);
           break;
         }
         else if(flag == 0){
 
-            log_msg("\nSub dir does not exist!\n");
+            //log_msg("\nSub dir does not exist!\n");
             return ENOENT;
         }
         flag = 0;
     }
-    log_msg("\nAfter while\n");
+    //log_msg("\nAfter while\n");
 
     parent->metadata->size -= parent->files[i].metadata->size;
     parent->metadata->num_block -= parent->files[i].metadata->num_block;
 
-    (parent->metadata->num_children--);
-    log_msg("\nBefore for\n");
-    for(j = i; j < parent->metadata->num_children; j++){
-      parent->files[j] = parent->files[j+1];
+    parent->metadata->num_children = parent->metadata->num_children - 1;
+    //log_msg("\nBefore for kids:%d, i: %d\n", parent->metadata->num_children, i);
+     for(j = i; j < parent->metadata->num_children; j++){
+          //log_msg("\n hellooooo\n");
+         //log_msg("\n child:%d, name: %s\n",j,parent->files[j].metadata->name);
+        parent->files[j] = parent->files[j+1];
     }
-    for(int i=0; i<10; i++)
-      log_msg("\nPRINTING FILES: %d %s\n", &i, parent->files[i]);
-    log_msg("\nAfter for\n");
-    parent->files = realloc(parent->files, parent->metadata->num_children*sizeof(bb_file));
+
+
+    //log_msg("\n after for\n");
+
+    //log_msg("\nAfter for kids:%d name: %s\n", parent->metadata->num_children, parent->metadata->name);
+
+    //if(parent->metadata->num_children > 0)
+    //free(&parent->files[parent->metadata->num_children]);
+    //log_msg("\nparent size: %d, bb_file size %d\n", sizeof(parent->files), sizeof(bb_file));
+    parent->files = realloc(parent->files, sizeof(bb_file)*parent->metadata->num_children);
+    //log_msg("\nparent size: %d\n", sizeof(parent->files));
     if(parent->files == NULL)
         log_error("\nremove from root realloc\n");
 
-
-    log_msg("\nExited remove from root\n");
+    for(int k = 0; k < parent->metadata->num_children; k++){
+        //log_msg("\nwhy\n");
+        //log_msg("\n%d: %s\n",k, parent->files[k].metadata->name);
+    }
+    //log_msg("\nExited remove from root\n");
     //free(&parent->files[j]);
 }
 
@@ -496,7 +512,7 @@ int bb_unlink(const char *path)
     bb_fullpath(fpath, path);
 
     remove_from_root(path);
-    log_msg("\nExiting unlink\n");
+    //log_msg("\nExiting unlink\n");
     return 0;//log_syscall("unlink", unlink(fpath), 0);
 }
 
@@ -630,19 +646,19 @@ int bb_open(const char *path, struct fuse_file_info *fi)
     bb_fullpath(fpath, path);
 
     bb_file *dir = check_bbfile(path);
-    log_msg("\nafter check\n");
+    //log_msg("\nafter check\n");
 
     if(dir == NULL){
-        log_msg("\nenoent\n");
+        //log_msg("\nenoent\n");
         return -ENOENT;
     }
     if(S_ISDIR(dir->metadata->mode)){
-        log_msg("\nait is a dir\n");
+        //log_msg("\nait is a dir\n");
         return -1;
     }
-    log_msg("\nbefore fi\n");
+    //log_msg("\nbefore fi\n");
     fi->fh = (intptr_t) dir;
-    log_msg("\nEXiting open!\n");
+    //log_msg("\nEXiting open!\n");
     return retstat;
 }
 
@@ -686,70 +702,59 @@ int bb_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_
     }
 
     //file_init(&newfile, sb);
-    log_msg("\n1\n");
+    //log_msg("\n1\n");
     blocks = size/BLOCK_SIZE ;
-    log_msg("\n2 %d\n", blocks);
+    //log_msg("\n2 blocks %d\n", blocks);
     which_block = offset/BLOCK_SIZE;
-    log_msg("\n3 %d\n", which_block);
+    //log_msg("\n3 which block %d\n", which_block);
 
     newfile = check_bbfile(path);
-    log_msg("\n4\n");
-//     //check if block hash already exists
-//     for(int i = 0; i < which_block; i++){
-//
-//         //deixnei an den yparxei auto to block
-//         int flag = 0;
-//         SHA1((newfile->block[i]).buffer, BLOCK_SIZE, (newfile->block[i]).hash);
-//         for(j = 0; j < 16*10; j++){
-//
-//             if(!strcmp((newfile->block[i]).hash,all_blocks[j].hash)){
-//                 newfile->block[i] = all_blocks[j];
-//                 flag = 1;
-//                 break;
-//             }
-//             if(!strcmp(all_blocks[j].hash,"00000000000000000000"))
-//                 break;
-//         }
-//         if(flag == 0){
-//             all_blocks[j] = newfile->block[i];
-//         }
-//
-//     }
+    //log_msg("\n4 offset %d\n", offset);
 
     //write to buf from blocks
     char temp[BLOCK_SIZE + 1];
     temp[BLOCK_SIZE] = '\0';
     // first block, read from offset
     int begin_point = offset%BLOCK_SIZE;
-    buf = (char *)malloc(sizeof(char)*BLOCK_SIZE*blocks);
-
-    log_msg("\n5 %d\n", begin_point);
-    if(newfile->metadata->size > 0)
-        log_msg("\nin if 6 %s\n", newfile->block[which_block].hash);
-        log_msg("\nin if 6 %s\n", newfile->block[which_block].buffer);
-        strncpy(temp,newfile->block[which_block].buffer, BLOCK_SIZE);
-    log_msg("\n6 %s\n", newfile->block[which_block].buffer);
-
+    //buf = (char *)malloc(sizeof(char)*BLOCK_SIZE*blocks);
+    int index = newfile->block[which_block];
+    //log_msg("\n5 begin_point %d\n", begin_point);
+    //log_msg("\n6 index for all_blocks %d\n", index);
+    if(newfile->metadata->size > 0 && which_block < newfile->metadata->num_block ){
+        //log_msg("\hash %s\n", all_blocks->blocks[index].hash);
+        //log_msg("\nbuffer %s\n", all_blocks->blocks[index].buffer);
+        //log_msg("\nbuffer %s\n", &(all_blocks->blocks[index].buffer[begin_point]));
+        strncpy(temp,&(all_blocks->blocks[index].buffer[begin_point]), BLOCK_SIZE - begin_point);
+        //log_msg("\n6 %s\n", all_blocks->blocks[index].buffer);
+    }
     strcpy(buf,temp);
-    log_msg("\n7 %s\n", buf);
+    //log_msg("\n7 %s\n", buf);
     // intermediate blocks, read them fully
     for(j = which_block+1; j  < blocks + which_block -1; j++){
-        log_msg("\nintermediate block\n");
-        strcpy(temp,newfile->block[j].buffer);
-        strcat(buf,temp);
+        //log_msg("\nintermediate block\n");
+        strcpy(temp,all_blocks->blocks[newfile->block[j]].buffer);
+        strncat(buf,temp,BLOCK_SIZE);
+        //log_msg("\n%s\n",temp);
     }
 
     //last block
     if(blocks > 1){
-        log_msg("\nlast block\n");
-        strncpy(temp, newfile->block[j].buffer,begin_point + size%BLOCK_SIZE);
-        strcat(buf,temp);
+        //log_msg("\nlast block\n");
+        if((begin_point + size%BLOCK_SIZE) == 0){//perfect fit
+            strcpy(temp,all_blocks->blocks[newfile->block[j]].buffer);
+            strncat(buf,temp,BLOCK_SIZE);
+        }
+        else{
+            strncpy(temp, all_blocks->blocks[newfile->block[j]].buffer,begin_point + size%BLOCK_SIZE);
+            //log_msg("\n%s\n",temp);
+            strncat(buf,temp,begin_point + size%BLOCK_SIZE);
+        }
     }
     log_msg("\nbb_read(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
 	    path, buf, size, offset, fi);
     // no need to get fpath on this one, since I work from fi->fh not the path
     //log_fi(fi);
-    log_msg("\nFINAL BUF %s\n", buf);
+    //log_msg("\nFINAL BUF %s\n", buf);
     return size;//log_syscall("pread", pread(fi->fh, buf, size, offset), 0);
 }
 
@@ -769,53 +774,77 @@ int bb_write(const char *path, const char *buf, size_t size, off_t offset,
     int j, flag =0;
     struct stat sb;
     int begin_point = 0;
+    unsigned const char temp_buf[BLOCK_SIZE];
+    unsigned char temp_hash[SHA_DIGEST_LENGTH];
 
     log_msg("\nWrite %s\n, buf: %s, size: %d", path, buf, size);
     int ret = bb_getattr(path, &sb);
-    log_msg("\n 1 \n");
+
+    //log_msg("\n 1 \n");
     if( S_ISDIR(sb.st_mode) || ret == -ENOENT){
-        log_msg("\n 2 \n");
+        //log_msg("\n 2 \n");
         return -1;
     }
-    log_msg("\n 3 \n");
+    //log_msg("\n 3 \n");
     int new_blocks = size/BLOCK_SIZE;
-        log_msg("\n 4 %d \n",new_blocks);
-    if(size%BLOCK_SIZE > 0)
+        //log_msg("\n 4 new blocks %d \n",new_blocks);
+
+    //if buffer is not a multiple of 4KB
+    //and >4KB, then it need an extra block for that extra
+    //data to write.
+    if(size%BLOCK_SIZE > 0 && size>BLOCK_SIZE){
         new_blocks += 1;
+        //size_to_write = BLOCK_SIZE;
+    }
+    if(size < BLOCK_SIZE){
+        new_blocks += 1;//giati to size/BLOCK_SIZE = 0
+    }
     int which_block = offset/BLOCK_SIZE;
-    log_msg("\n 5 %d \n",which_block);
+    //log_msg("\n 5 which block %d \n",which_block);
     bb_file *newfile = check_bbfile(path);
-
-
-    //    newfile->block = (bb_block *)malloc(sizeof(bb_block)*16);
-    log_msg("\n 7 \n");
+    if(S_ISDIR(newfile->metadata->mode)){
+        //log_msg("\nERROR WRITE: File is directory\n");
+        return -1;
+    }
+    //    newfile->block = (bb_block *)malloc(sizeof(bb_block)*MAX_BLOCKS);
+    //log_msg("\noffset:%d buf[offset]:%s \n", offset, buf + offset%BLOCK_SIZE);
+    //log_msg("\n 7 \n");
     if(newfile->metadata->size > 0){
-        log_msg("\nfile has data 8 \n");
+        //log_msg("\nfile has data 8 \n");
         begin_point = which_block;
     }
-    for(int i = begin_point; i < new_blocks; i++){
 
-        strncpy(newfile->block[i].buffer,buf, size);
-        log_msg("\n%s 9 \n", newfile->block[i].buffer);
-        newfile->metadata->size += strlen(buf);
-        (newfile->metadata->num_block)++;
-        //deixnei an den yparxei auto to block
+    //first block
+    if(size > 0){
+        //log_msg("\nfirst block, size to write: %d\n",size - offset%BLOCK_SIZE);
+        strcpy(temp_buf, buf + offset%BLOCK_SIZE);
+        //log_msg("\nbefore actual copy %s\n", temp_buf);
+
+        strncpy(temp_buf, buf + offset%BLOCK_SIZE, size - offset%BLOCK_SIZE);
+        //log_msg("\ninitial %d buf %s\n", size, temp_buf);
+         newfile->metadata->size += strlen(buf);
+        newfile->metadata->num_block = newfile->metadata->num_block + 1;
+
         flag = 0;
         //create hash for new block
-        SHA1((unsigned const char *)buf, BLOCK_SIZE, (newfile->block[i]).hash);
-        log_msg("\nSHA %s 10 \n", newfile->block[i].hash);
+        SHA1(temp_buf, BLOCK_SIZE, temp_hash);
+
+        //log_msg("\nSHA %s %d \n", temp_hash, strlen(temp_hash));
+
         //check in the table of all the blocks if there is a similar hash
         for(j = 0; j < all_blocks->num_blocks; j++){
-
+            //log_msg("\nhi\n");
+            //log_msg("\nhash %d : %s\n", j, all_blocks->blocks[j].hash);
             //an h thesh sto pinaka einai kenh, den exei idio block ston pinaka
             //ara break kai valto
-           if(strcmp((const char *)all_blocks[j].hash,(const char *)"00000000000000000000")==0){
-               log_msg("\nALL_BLOCKS EMPTY\n");
+           if(strcmp((const char *)all_blocks->blocks[j].hash,(const char *)"00000000000000000000")==0){
+               //log_msg("\nNO BLOCKS MATCH\n");
                 break;
            }
-            if(strcmp((const char *)(newfile->block[i].hash), (const char *)all_blocks[j].hash) == 0){
-                log_msg("\nSAME HASH %s 11 \n", all_blocks[j].hash);
-                newfile->block[i] = all_blocks[j];
+            if(strncmp((const char *)(temp_hash), (const char *)all_blocks->blocks[j].hash, SHA_DIGEST_LENGTH) == 0){
+                //log_msg("\nSAME HASH %s 11 \n", all_blocks->blocks[j].hash);
+                newfile->block[newfile->metadata->num_block -1] = j;//now file points to the j-th block of the storage
+                //log_msg("\nj: %d, newfile->block[j]: %d \n", j, newfile->block[newfile->metadata->num_block -1]);
                 flag = 1;
                 break;
             }
@@ -823,22 +852,131 @@ int bb_write(const char *path, const char *buf, size_t size, off_t offset,
         }
         //new block
         if(flag == 0){
-            (all_blocks->num_blocks)++;
-            all_blocks = realloc(all_blocks,sizeof(bb_block)*(all_blocks->num_blocks));
-            if(all_blocks == NULL)
+            newfile->block[newfile->metadata->num_block -1] = j;
+            all_blocks->num_blocks = all_blocks->num_blocks + 1;
+            //log_msg("\nALL BLOCKS: %d\n",all_blocks->num_blocks);
+            all_blocks->blocks = realloc(all_blocks->blocks,sizeof(bb_block)*(all_blocks->num_blocks));
+            if(all_blocks->blocks == NULL)
                 log_error("\nwrite realloc\n");
-            strcpy(all_blocks[j].buffer, newfile->block[i].buffer);
-            log_msg("\n12 %s \n", all_blocks[j].buffer);
-            strcpy(all_blocks[j].hash, newfile->block[i].hash);
-            log_msg("\n13 %s \n", all_blocks[j].hash);
-            all_blocks[j] = newfile->block[i];
+            strncpy(all_blocks->blocks[j].buffer, temp_buf, size);
+            //log_msg("\n12 %s \n", all_blocks->blocks[j].buffer);
+            strncpy(all_blocks->blocks[j].hash, temp_hash, SHA_DIGEST_LENGTH);
+            //log_msg("\n13 %s \n", all_blocks->blocks[j].hash);
+            //all_blocks->blocks[j] = newfile->block[i];
         }
     }
 
+    //intermediate blocks (all BLOCK_SIZE)
+    for(int i = begin_point +1; i < new_blocks + begin_point -1; i++){
+        unsigned char temp_hash2[SHA_DIGEST_LENGTH];
+        strncpy(temp_buf,buf, BLOCK_SIZE);
+        //log_msg("\n%s 9 \n", temp_buf);
+        newfile->metadata->size += strlen(buf);
+        newfile->metadata->num_block = newfile->metadata->num_block + 1;
+        //deixnei an den yparxei auto to block
+        flag = 0;
+        //create hash for new block
+        SHA1(temp_buf, BLOCK_SIZE, temp_hash2);
 
+        //log_msg("\nSHA %s %d \n", temp_hash2, strlen(temp_hash2));
+
+        //check in the table of all the blocks if there is a similar hash
+        for(j = 0; j < all_blocks->num_blocks; j++){
+            //log_msg("\nhi\n");
+            //log_msg("\nhash %d : %s\n", j, all_blocks->blocks[j].hash);
+            //an h thesh sto pinaka einai kenh, den exei idio block ston pinaka
+            //ara break kai valto
+           if(strcmp((const char *)all_blocks->blocks[j].hash,(const char *)"00000000000000000000")==0){
+               //log_msg("\nNO BLOCKS MATCH\n");
+                break;
+           }
+            if(strncmp((const char *)(temp_hash2), (const char *)all_blocks->blocks[j].hash, SHA_DIGEST_LENGTH) == 0){
+                //log_msg("\nSAME HASH %s 11 \n", all_blocks->blocks[j].hash);
+                newfile->block[newfile->metadata->num_block -1] = j;//now file points to the j-th block of the storage
+                //log_msg("\nj: %d, newfile->block[j]: %d \n", j, newfile->block[newfile->metadata->num_block -1]);
+                flag = 1;
+                break;
+            }
+
+        }
+        //new block
+        if(flag == 0){
+            newfile->block[newfile->metadata->num_block -1] = j;
+            all_blocks->num_blocks = all_blocks->num_blocks + 1;
+            //log_msg("\nALL BLOCKS: %d\n",all_blocks->num_blocks);
+            all_blocks->blocks = realloc(all_blocks->blocks,sizeof(bb_block)*(all_blocks->num_blocks));
+            if(all_blocks->blocks == NULL)
+                log_error("\nwrite realloc\n");
+            strncpy(all_blocks->blocks[j].buffer, temp_buf, size);
+            //log_msg("\n12 %s \n", all_blocks->blocks[j].buffer);
+            strncpy(all_blocks->blocks[j].hash, temp_hash2, SHA_DIGEST_LENGTH);
+            //log_msg("\n13 %s \n", all_blocks->blocks[j].hash);
+            //all_blocks->blocks[j] = newfile->block[i];
+        }
+    }
+
+    //last block
+    if(new_blocks > 1){
+        //log_msg("\nlast block\n");
+        if((offset%BLOCK_SIZE + size%BLOCK_SIZE) == 0){//perfect fit
+            strncpy(temp_buf,buf, BLOCK_SIZE);
+        }
+        else{
+            strncpy(temp_buf, buf,offset%BLOCK_SIZE + size%BLOCK_SIZE);
+            //log_msg("\n%s\n",temp_buf);
+        }
+        unsigned char temp_hash1[SHA_DIGEST_LENGTH];
+        //log_msg("\n%s 9 \n", temp_buf);
+        newfile->metadata->size += strlen(buf);
+        newfile->metadata->num_block = newfile->metadata->num_block + 1;
+        //deixnei an den yparxei auto to block
+        flag = 0;
+        //create hash for new block
+        SHA1(temp_buf, BLOCK_SIZE, temp_hash1);
+        //strncpy(temp_hash,temp_hash_ptr, SHA_DIGEST_LENGTH);
+        //log_msg("\nSHA %s %d \n", temp_hash1, strlen(temp_hash1));
+
+        //check in the table of all the blocks if there is a similar hash
+        for(j = 0; j < all_blocks->num_blocks; j++){
+            //log_msg("\nhi\n");
+            //log_msg("\nhash %d : %s\n", j, all_blocks->blocks[j].hash);
+            //an h thesh sto pinaka einai kenh, den exei idio block ston pinaka
+            //ara break kai valto
+           if(strcmp((const char *)all_blocks->blocks[j].hash,(const char *)"00000000000000000000")==0){
+               //log_msg("\nNO BLOCKS MATCH\n");
+                break;
+           }
+            if(strncmp((const char *)(temp_hash1), (const char *)all_blocks->blocks[j].hash, SHA_DIGEST_LENGTH) == 0){
+                //log_msg("\nSAME HASH %s 11 \n", all_blocks->blocks[j].hash);
+                newfile->block[newfile->metadata->num_block -1] = j;//now file points to the j-th block of the storage
+                //log_msg("\nj: %d, newfile->block[j]: %d \n", j, newfile->block[newfile->metadata->num_block -1]);
+                flag = 1;
+                break;
+            }
+
+        }
+        //new block
+        if(flag == 0){
+            newfile->block[newfile->metadata->num_block -1] = j;
+            all_blocks->num_blocks = all_blocks->num_blocks + 1;
+            //log_msg("\nALL BLOCKS: %d\n",all_blocks->num_blocks);
+            all_blocks->blocks = realloc(all_blocks->blocks,sizeof(bb_block)*(all_blocks->num_blocks));
+            if(all_blocks->blocks == NULL)
+                log_error("\nwrite realloc\n");
+            strncpy(all_blocks->blocks[j].buffer, temp_buf, size);
+            //log_msg("\n12 %s \n", all_blocks->blocks[j].buffer);
+            strncpy(all_blocks->blocks[j].hash, temp_hash1, SHA_DIGEST_LENGTH);
+            //log_msg("\n13 %s \n", all_blocks->blocks[j].hash);
+            //all_blocks->blocks[j] = newfile->block[i];
+        }
+    }
     log_msg("\nbb_write(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
 	    path, buf, size, offset, fi
 	    );
+    //log_msg("\nALL BLOCKS: %d\n",all_blocks->num_blocks);
+    //log_msg("\n12 %s \n", all_blocks->blocks[j].buffer);
+    //log_msg("\n13 %s \n", all_blocks->blocks[j].hash);
+    //log_msg("\nnewfile->block[j]: %d \n",newfile->block[newfile->metadata->num_block -1]);
     // no need to get fpath on this one, since I work from fi->fh not the path
     log_fi(fi);
 
@@ -982,7 +1120,7 @@ int bb_getxattr(const char *path, const char *name, char *value, size_t size)
   //
   //   retstat = log_syscall("lgetxattr", lgetxattr(fpath, name, value, size), 0);
   //   if (retstat >= 0)
-	// log_msg("    value = \"%s\"\n", value);
+	// //log_msg("    value = \"%s\"\n", value);
   //
   //   return retstat;
   return 0;
@@ -1002,12 +1140,10 @@ int bb_listxattr(const char *path, char *list, size_t size)
 
     retstat = 0;//log_syscall("llistxattr", llistxattr(fpath, list, size), 0);
     if (retstat >= 0) {
-	log_msg("    returned attributes (length %d):\n", retstat);
-	if (list != NULL)
-	    for (ptr = list; ptr < list + retstat; ptr += strlen(ptr)+1)
-		log_msg("    \"%s\"\n", ptr);
-	else
-	    log_msg("    (null)\n");
+	//log_msg("    returned attributes (length %d):\n", retstat);
+	// if (list != NULL)
+	//     for (ptr = list; ptr < list + retstat; ptr += strlen(ptr)+1)
+		//log_msg("    \"%s\"\n", ptr);
     }
 
     return retstat;
@@ -1053,7 +1189,7 @@ int bb_opendir(const char *path, struct fuse_file_info *fi)
 
     fi->fh = (intptr_t) dir;
 
-    log_msg("\nopenDir Success\n");
+    //log_msg("\nopenDir Success\n");
     return retstat;
 }
 
@@ -1099,11 +1235,11 @@ int bb_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset
   }
 	else{
 		for(int i = 0; i < dir_node->metadata->num_children; i++){
-			log_msg(":%s:\n", dir_node->files[i].metadata->name);
+			//log_msg(":%s:\n", dir_node->files[i].metadata->name);
 			filler( buf, dir_node->files[i].metadata->name, NULL, 0 );
 		}
 	}
- log_msg("\nreadDir success\n");
+ //log_msg("\nreadDir success\n");
 
   retstat = log_error("bb_readdir readdir");
 
@@ -1172,8 +1308,8 @@ void *bb_init(struct fuse_conn_info *conn)
     log_fuse_context(fuse_get_context());
 
     //// OUR CODE::::
-    //all_blocks = (bb_block *)calloc(10*16, sizeof(bb_block));
-    all_blocks = (bb_block *)calloc(1, sizeof(bb_block));
+    //all_blocks = (bb_block *)calloc(MAX_FILES*MAX_BLOCKS, sizeof(bb_block));
+    all_blocks = (bb_all_blocks *)calloc(1, sizeof(bb_all_blocks));
     root_files = (bb_file *)malloc(sizeof(bb_file));
     root_files->metadata = (bb_metadata *)malloc(sizeof(bb_metadata));
 
@@ -1187,14 +1323,15 @@ void *bb_init(struct fuse_conn_info *conn)
     strcpy(root_files->metadata->name,"/");
     root_files->metadata->num_block = 0;
     root_files->metadata->num_children = 0;
-    root_files->files = (bb_file *)malloc(sizeof(bb_file)*10);
+    root_files->files = (bb_file *)malloc(sizeof(bb_file));
     strcpy(root_files->metadata->fullpath,"/");
-    root_files->block = NULL;//its a dir, no need for blocks
+    //root_files->block = NULL;//its a dir, no need for blocks
     root_files->metadata->mode = S_IRWXO | S_IRWXG | S_IRWXU | S_IFDIR;
 
     all_blocks->num_blocks = 0;
-    //for (int i = 0; i< 10*16; i++)
-        strcpy(all_blocks[0].hash, "00000000000000000000");
+    //for (int i = 0; i< MAX_FILES*MAX_BLOCKS; i++)
+    all_blocks->blocks = (bb_block *)malloc(sizeof(bb_block));
+    strcpy(all_blocks->blocks->hash, "00000000000000000000");
 
     return BB_DATA;
 }
@@ -1214,6 +1351,7 @@ void bb_destroy(void *userdata)
 
     free(cur->files);
     free(cur);
+    free(all_blocks->blocks);
     free(all_blocks);
 
 }
@@ -1316,7 +1454,7 @@ int bb_fgetattr(const char *path, struct stat *statbuf, struct fuse_file_info *f
     if (!strcmp(path, "/"))
 	return bb_getattr(path, statbuf);
 
-    retstat = fstat(fi->fh, statbuf);
+    retstat = 0;//fstat(fi->fh, statbuf);
     if (retstat < 0)
 	retstat = log_error("bb_fgetattr fstat");
 
